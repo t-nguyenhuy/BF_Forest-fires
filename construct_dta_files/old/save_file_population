@@ -1,0 +1,32 @@
+**** Run through the 4 survey phases and calculate the household-sizes in each case.
+**** (Note that e.g. the first survey does not cover all household that appear
+**** in later surveys. Therefore we add calculate housheold size in each surveys
+**** and regard household size at first appearance in the surveys.)
+
+**** Loop over the fours surveys and calculate size at the household level.
+forvalues i=1(1)4{
+  use "$currSurveyData/emc2014_p`i'_individu_27022015.dta", clear
+  bysort zd menage: egen N_members = count(numind)
+  qui gen zd_menage_ID = zd*1000+menage
+  ** To be sure, let us also save the identifier of the household head.
+  ** Household heads can be identified by B5==1
+  if (`i'==3) {
+    qui rename lien_cm3 B5
+  }
+  qui gen hhh_numind_temp = numind if (B5==1)
+  bysort zd menage: egen hhh_numind = max(hhh_numind_temp)
+  collapse (mean) zd menage N_members hhh_numind, by(zd_menage_ID)
+  qui gen survey_number = `i'
+  save "$$currTempFold/emc2014_p`i'_HH.dta", replace
+}
+
+**** Pool the observations over different survey stages, take household
+**** size measures at the first appearance of the household, and take the average
+**** household size
+use "$$currTempFold/emc2014_p1_HH.dta", clear
+forvalues i=2(1)4{
+  append using "$$currTempFold/emc2014_p`i'_HH.dta"
+}
+bysort zd menage: egen firstAppearance = min(survey_number)
+drop if survey_number != firstAppearance
+save "$$currTempFold/emc2014_HH.dta", replace
