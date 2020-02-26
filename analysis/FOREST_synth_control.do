@@ -118,6 +118,8 @@ if (1 == 1){;
         bysort treatment year: egen `y'_TM        = mean(`y');
         bysort treatment year: egen `y'_synth_TM  = mean(`y'_synth);
 
+        capture graph drop     tc_manual;
+        *** Treatment-Control graph
         twoway (line `y'_TM year if (forestid == 1), lc(blue) lw(thick))
                (line `y'_synth_TM year if (forestid == 1), lc(red) lp(dash)),
                legend(label(1 "Treated") label(2 "Synthetic control"))
@@ -147,7 +149,10 @@ if (1 == 1){;
             graph export          "TC_`y'_forests.png", width(7000) replace;
         };
 
-        graph close _all;
+        capture graph close _all;
+        capture graph drop  tc_manual;
+        capture graph drop  effect;
+        capture graph drop  TC*;
         *restore;
     };
 

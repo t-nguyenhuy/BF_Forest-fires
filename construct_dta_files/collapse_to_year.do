@@ -1,5 +1,5 @@
-local   collapseForestData  1
-local   distanceSample      1
+local   collapseForestData  0
+local   distanceSample      0
 local   collapseBlockData   1
 
 if (`collapseForestData' == 1){
@@ -51,7 +51,7 @@ if (`collapseForestData' == 1){
         (mean)
               fire*   conf50*   conf80*   ndvi*    evi*
               rny_*   prs_*     dry_*     preR_*
-              miss*
+              miss*   distance*
               avg_HHsize      HH_educ*    N_HH     EstPop
               A5BIS   mV07*   *fert      avg_dur_value
               L08_LightingW   L14_CookingW          landInt*
@@ -119,7 +119,7 @@ if (`collapseForestData' == 1){
 
 
         *** Generate the variables;
-        foreach var in ndvi_imp evi_imp ndiv_ipol evi_ipol{;
+        foreach var in ndvi_imp evi_imp ndvi_ipol evi_ipol{;
             bysort forestid agrSeason: egen `varNam'`var'   = mean(`var')  if `pMonth';
             bysort forestid agrSeason: egen `varNam'`var'_s = mean(`varNam'`var');
             bysort forestid agrSeason: replace `varNam'`var' = `varNam'`var'_s;
@@ -177,20 +177,23 @@ if (`collapseForestData' == 1){
     };
 
     ** LSMS variables;
-    local LSMSvars = "avg_HHsize HH_educ_prim HH_educ_second_prem " ///
-                      + "HH_educ_second_fin HH_educ_sup N_HH A5BIS " ///
-                      + "mV07 org_fert inorg_fert other_fert avg_dur_value " ///
-                      + "L14_CookingW landIntFoodCons landIntFoodConsSh " ///
-                      + "landIntFuelCons EstPop";
+    local LSMSvars = "avg_HHsize HH_educ_prim HH_educ_second_prem "
+                      + "HH_educ_second_fin HH_educ_sup N_HH A5BIS "
+                      + "mV07 org_fert inorg_fert other_fert avg_dur_value "
+                      + "L14_CookingW landIntFoodCons landIntFoodConsSh "
+                      + "landIntFuelCons EstPop L08_LightingW";
     foreach var of local LSMSvars{;
         bysort forestid year: egen `var'_med = median(`var');
         replace                    `var'  = `var'_med;
         drop                       `var'_med;
     };
 
+    *** Drop if no complete information;
+    drop    if OBJECTID == 4912l
+
     *** Reshape data to annual observations while keeping monthly data;
-    reshape wide `reshapeVarlist' , i(forestidYear) j(month);
-    xtset forestid year;
+    reshape   wide `reshapeVarlist' , i(forestidYear) j(month);
+    xtset   forestid year;
 
     gen   post            = (year >= 2014);
     gen   postTreatment   = post * treatment;
@@ -241,31 +244,33 @@ if (`collapseBlockData' == 1){
       drop    if forestid    == 86;
       drop    if year        <= 2003;
 
+      ***     Drop incomplete block;
+      drop    if OBJECTID    == 4912;
+
 
       foreach var of varlist 			fire* conf* ndvi* evi*{;
-    		bysort forestBlockID year:	egen `var'_aAvg		= mean(`var');
-    		bysort forestBlockID year:	egen `var'_aAvgnR_T = mean(`var')
-    												 if (month!=6)|(month!=7)|(month!=8);
-    		bysort forestBlockID year:	egen `var'_aAvgnR	= mean(`var'_aAvgnR_T);
+    		bysort forestBlockID year:	egen   `var'_aAvg		     = mean(`var');
+    		bysort forestBlockID year:	egen   `var'_aAvgnR_T    = mean(`var')
+    												              if (month!=6)|(month!=7)|(month!=8);
+    		bysort forestBlockID year:	egen   `var'_aAvgnR	     = mean(`var'_aAvgnR_T);
     		drop		`var'_aAvgnR_T;
 
     	};
 
     	foreach y of varlist rny_* prs_* dry_* preR_*{;
 
-        	bysort forestBlockID year: replace `y' = .		if (month <= 5);
-        	bysort forestBlockID year: egen `y'_mean = mean(`y');
-        	bysort forestBlockID year: replace `y'_mean = round(`y'_mean, .000001);
-        	bysort forestBlockID year: replace `y'= `y'_mean;
+        	bysort forestBlockID year: replace `y'         = .		if (month <= 5);
+        	bysort forestBlockID year: egen    `y'_mean    = mean(`y');
+        	bysort forestBlockID year: replace `y'         = round(`y'_mean, .000001);
         	drop `y'_mean;
         };
 
     	drop agrSeason time;
 
     	foreach y of varlist	dist_aEdge gridid histFor* miss*{;
-    		bysort forestBlockID year:	egen `y'_MY = mean(`y');
-    		bysort forestBlockID year:  egen `y'_M	= median(`y'_MY);
-    		bysort forestBlockID year:  replace `y'_M = round(`y'_M,.0001);
+    		bysort forestBlockID year:	egen `y'_MY         = mean(`y');
+    		bysort forestBlockID year:  egen `y'_M	        = median(`y'_MY);
+    		bysort forestBlockID year:  replace `y'_M       = round(`y'_M,.0001);
     		drop 	`y' `y'_MY;
     	};
 
@@ -279,7 +284,10 @@ if (`collapseBlockData' == 1){
       gen         forestBlockYear = .;
       recast      long forestBlockYear;
     	replace		  forestBlockYear = forestBlockID * 10000 + year;
-      drop        distance;
+
+      bysort forestBlockID:         egen distancem = mean(distance);
+      drop                          distance;
+      rename            distancem   distance;
 
     	reshape wide `reshapeVarlist',i(forestBlockYear) j(month);
     	xtset	forestBlockID year;
@@ -289,6 +297,6 @@ if (`collapseBlockData' == 1){
     	gen		post2			= (year >= 2015);
     	gen 	post2Treatment 	= post2 * treatment;
 
-      save    "$currIntermout/burkina_faso_fires_forestblock-ANNUAL.dta", replace;
+      save    "$currIntermOut/burkina_faso_fires_forestblock-YEAR.dta", replace;
       #delimit cr
 }

@@ -10,7 +10,10 @@ local pprevId   = $taskId-2;
 
 local mainFullDataset 1;
 
+*di "`mainFullDataset'";
+
 if (`mainFullDataset'==1){;
+    *** Convert csv files for merging;
     forvalues i=1(1)1{;
       if `i'==1{;
           local filename "forestgrid_settlement_assignments";
@@ -31,6 +34,12 @@ if (`mainFullDataset'==1){;
       save "$${currTempFold}/`filename'.dta",replace;
     };
 
+    *** Add dummies to indicate which forests are potentially affected by spillovers;
+    import excel using "$rawDataFolder/mouhoun_t_neighb/geography.xlsx",
+        sheet("Sheet1") firstrow clear;
+    drop        forest_name;
+    tempfile    forest_location;
+    save        `forest_location';
 
     **** Convert grid edge data to STATA format from .CSV;
     import delimited       "${tempFolder`prevId'}/edgDist_pFIP_grids.csv", clear;
@@ -55,8 +64,13 @@ if (`mainFullDataset'==1){;
 
 
     use "$rawDataFolder/Forest_fire_panel/burkina_faso_fires_fullpanel.dta", clear;
+        ** Drop   distance variable (distnace to green area edge);
+        drop      distance;
+
+
         *** Merge the linked settlement ID-s to the forest grid panel;
         *** Then, merge forest_level-variables;
+        **        `distance' variable will be replaced by distance to localities;
         merge m:1 gridid      using "$$currTempFold/forestgrid_settlement_assignments.dta", nogen;
         merge m:1 forestid    using "$$currTempFold/forest_data.dta", nogen;
         sleep 2000;
@@ -66,45 +80,9 @@ if (`mainFullDataset'==1){;
         * from the LSMS survey;
         * --> match OBJECT to zd;
 
-        **** Add enumeration identifiers;
-        merge m:m OBJECTID    using "${intermFolder`pprevId'}/ZD_VILLAGE/zd_village_match.dta",
-          keepusing(zd) keep(master match) nogen;
-
-
-        **** Add LSMS covariates;
-            ****** Number of enumeration zone level HH-s and average HH size;
-            merge m:1 zd          using "$$currTempFold/emc2014_HH_size.dta",
-             keepusing(N_HH avg_HHsize EstPop HH_educ*) keep(master match);
-            drop _merge;
-
-            ***** Share of agricultural households and share of lands collectively cultivated.;
-            merge m:1 zd          using "$$currTempFold/emc2014_agri_HH_shares.dta",
-              keepusing(A5BIS mV07) keep(master match);
-            drop _merge;
-
-            ***** Share of agricultural households using fertilizers;
-            merge m:1 zd          using "$$currTempFold/emc2014_agri_intrants.dta",
-              keepusing(org_fert inorg_fert other_fert) keep(master match);
-            drop _merge;
-
-            ***** Average household asset index (durable goods);
-            merge m:1 zd          using "$$currTempFold/emc2014_biensdurables.dta",
-              keepusing(avg_dur_value) keep(master match);
-            drop _merge;
-
-            ***** Share of households using wood for lighting or cooking;
-            merge m:1 zd          using "$$currTempFold/emc2014_HH_logement.dta",
-              keepusing(L08_LightingW L14_CookingW) keep(master match);
-            drop _merge;
-
-            **** Land-intensive food consumption (in monetary terms and in share);
-            merge m:1 zd          using "$$currTempFold/emc2014_zd_cons7jours.dta",
-              keepusing(landIntFoodCons landIntFoodConsSh) keep(master match);
-            drop _merge;
-
-            **** Wood-based fuel (in monetary terms and in share);
-            merge m:1 zd          using "$$currTempFold/emc2014_zd_cons3mois.dta",
-              keepusing(landIntFuelCons landIntFuelCons) keep(master match);
+        **** Add enumeration identifiers and LSMS variables;
+        merge m:m OBJECTID      using "$$currTempFold/LSMS_vars.dta",
+            keep(master match);
             drop _merge;
 
         sleep 2000;
@@ -117,6 +95,9 @@ if (`mainFullDataset'==1){;
         **** Merge distance to green area edge;
         merge m:m gridid            using "${tempFolder`prevId'}/edgDist_grids.dta",
                 keep(master match) nogen;
+
+        **** Merge dummy variables indicating potential spillover forests;
+        merge m:1 forestid using `forest_location',   nogen;
 
 
 
@@ -212,11 +193,9 @@ if (`mainFullDataset'==1){;
     rename histFor_fireDumPr      histFor_fireDumPr_fire;
 
     winsor2 ndvi evi,    cut(5 96) by(time forestid) label;
-    by  gridid time: ipolate ndvi time, generate(ndvi_ipol) epolate;
-    by  gridid time: ipolate evi  time, generate(evi_ipol)  epolate;
-
-    replace area = area / 1000000;
-    label variable area "Forest area in square kilometers";
+    sort gridid time;
+    by  gridid: ipolate ndvi time, generate(ndvi_ipol) epolate;
+    by  gridid: ipolate evi  time, generate(evi_ipol)  epolate;
 
     label define  monthLabels
         1 "M1"    2 "M2"
@@ -239,8 +218,8 @@ local forestBlockDataset  1;
 
 if (`forestBlockDataset' == 1){;
   use     "$$currTempFold/burkina_faso_fires_fullpanel.dta", clear;
-
   drop    if (minndvi <= 0)|(minevi <= 0);
+  drop    if year <=2003;
 
   **** Collapse the dataset to the forest-block level;
   ****** - One set with all LSMS villages;
@@ -250,12 +229,21 @@ if (`forestBlockDataset' == 1){;
           if (`thresh' != 0){;
               keep    if thresh_`thresh' == 1;
           };
+
+          qui ds;
+          foreach y in `r(varlist)'{;
+              local label_`y': variable label `y';
+          };
+
+          * mouhoun_main neighb_T;
+
           bysort time forestid zd:  gen   forestBlockID = forestid * 1000 + zd;
           collapse (first)  forestid  forest_name fip   treatment agrSeason time
                             area      OBJECTID    histFor*        forestSize
                             avg_HHsize        HH_educ*      N_HH      EstPop
-                            A5BIS     mV07    *_fert        avg_dur_value
-                            L08_LightingW     L14_CookingW  landInt*
+                            A5BIS     mV07    *_fert        *avg_dur_value
+                            L08_LightingW     L14_CookingW  landInt* zd
+
                    (count)  gridid
                    (mean)   fire*   conf50*   conf80*   ndvi*   evi*
                             distance  dist_aEdge
@@ -263,6 +251,10 @@ if (`forestBlockDataset' == 1){;
                             rny*    prs*      dry*      preR*,
                     by(year month forestBlockID);
 
+          qui ds;
+          foreach y in `r(varlist)'{;
+              label variable `y' "`label_`y''";
+          };
           xtset forestBlockID time, monthly;
 
           if (`thresh' == 0){;

@@ -39,42 +39,21 @@ if (`execMonthlyVars' == 1){
                   fire      conf50      conf80
                   fireBurn  conf50Burn  conf80Burn
                   ndvi      evi         ndvi_imp      evi_imp
-              ,by(treatment year month);
+              ,by(year month);
 
           local outcomeVars   "fire* conf50* conf80* ndvi* evi*";
           foreach y of varlist `outcomeVars'{;
               twoway
-                  (line `y' time if treatment == 1, msize(1))
-                  (line `y' time if treatment == 0),
-                  legend(label(1 "Treated forests") label(2 "Non-treated forests"))
+                  (line `y' time if time >= `=monthly("2007M10","YM")' & time <= `=monthly("2014M10","YM")', msize(1) lcolor(blue)),
+                  legend(label(1 "All forests"))
                   xline(`=monthly("2014M10","YM")', lcolor(black))
-                  xlabel(`=monthly("2004M1","YM")'(12)`=monthly("2018M10","YM")',
+                  xlabel(`=monthly("2007M10","YM")'(12)`=monthly("2014M10","YM")',
                     angle(vertical));
               graph export "$outputFolder/Descriptives/TS_graphs_`sample'/TS_raw_`sample'_`y'.png",
                   width(7000) replace;
           };
           restore;
       };
-
-
-  *** Updated figures;
-  use if year < 2018 using "${intermFolder`prevId'}/burkina_faso_fires-MONTH_FOREST.dta", clear;
-      keep forestid fip treatment year month time  fire fireBurn conf50 conf50Burn conf80 conf80Burn;
-
-      collapse (first) time ///
-		           (mean) fire* conf50* conf80* ,by(treatment year month);
-
-      foreach y in fire fireBurn conf50 conf50Burn conf80 conf80Burn{;
-          twoway  (bar `y' time if (year<2018)&(treatment==0), col(gray) fi(inten20))
-                  (line `y' time if (year < 2018) & (treatment == 1), lc(blue)),
-                xline(`=monthly("2014M10","YM")', lcolor(black))
-                xlabel(`=monthly("2004M1","YM")'(12)`=monthly("2017M12","YM")', angle(vertical))
-                legend(order(2 1) label(1 "Control forests") label(2 "Treated forests"))
-                yscale(range(0 1)) ylabel(0(0.2)1) xtitle("Time");
-
-          graph export "$outputFolder/Descriptives/TS_graphs_full/TS_raw_full_TC_`y'.png", width(7000) replace;
-      };
-
 
   *** Generate one time series graph with all forests separately exhibited;
   #delimit ;
@@ -123,10 +102,10 @@ if (`execAnnualVars' == 1){
 
             collapse
                 (mean)
-                    rny1_*    prs2_*      dry3_*        preR4_*
-                ,by(treatment year);
+                    rny_*    prs_*      dry_*        preR_*
+                ,by(year);
 
-            local outcomeVars   "prs2_* dry3_* preR4_*";
+            local outcomeVars   "prs_* dry_* preR_*";
             foreach y of varlist `outcomeVars'{;
                 if (strpos(`"`y'"',"preR4_") > 0){;
                     local treatYear   2015;
@@ -136,11 +115,10 @@ if (`execAnnualVars' == 1){
                 };
 
                 twoway
-                    (line `y' year if treatment == 1, msize(1))
-                    (line `y' year if treatment == 0),
-                    legend(label(1 "Treated forests") label(2 "Non-treated forests"))
+                    (line `y' year if year >= 2008 & year <= 2014, msize(1)),
+                    legend(label(1 "All forests"))
                     xline(`treatYear', lcolor(black))
-                    xlabel(2004(2)2018);
+                    xlabel(2008(2)2014);
                 graph export "$outputFolder/Descriptives/TS_graphs_`sample'/TS_raw_`sample'_`y'.png",
                     width(7000) replace;
             };
@@ -153,31 +131,47 @@ if (`execAnnualVars' == 1){
 ****      Generate figures showing the extent of missing values in ndvi-evi;
 if (`missingVars' == 1){
     #delimit ;
-    use if year < 2018 using "${intermFolder`prevId'}/burkina_faso_fires-MONTH_FOREST.dta", clear;
+    use "${intermFolder`prevId'}/burkina_faso_fires-MONTH_FOREST.dta", clear;
 
     shell   mkdir "$outputFolder/Descriptives/TS_missing_graphs";
 
     keep forestid fip treatment year month time miss* ndvi* evi*;
     ***** Generate Missing time series for Treatment, non-treated fip, and all non-treated forests;
     preserve;
-        collapse (first) time
-                  (mean) miss* ,by(treatment year month);
+        keep  if (fip == 1) & (treatment == 0); /// only non-treated FIP forests;
+        replace treatment   = 2 if (treatment == 0);
+        collapse
+            (mean)
+                miss*
+            ,by(treatment time);
+
+        tempfile  temp1;
+        save      "`temp1'";
+    restore;
+
+    preserve;
+        collapse
+          (mean)
+              miss*
+          , by(treatment time);
+        append using "`temp1'";
 
         foreach y in ndvi evi{;
-
-          twoway  (bar `y' time if (year<2018)&(treatment==0), col(gray) fi(inten20))
-                  (line `y' time if (year < 2018) & (treatment == 1), lc(blue)),
+          di "A";
+            twoway (line miss`y' time if treatment == 1)
+                   (line miss`y' time if treatment == 0)
+                   (line miss`y' time if treatment == 2),
+                legend(label(1 "Treated forests") label(2 "Non-treated forests")
+                      label(3 "Non-treated FIP forests"))
                 xline(`=monthly("2014M10","YM")', lcolor(black))
-                xlabel(`=monthly("2004M1","YM")'(12)`=monthly("2017M12","YM")', angle(vertical))
-                legend(order(2 1) label(1 "Control forests") label(2 "Treated forests"))
-                yscale(range(0 1)) ylabel(0(0.2)1) xtitle("Time");
-
+                xlabel(`=monthly("2004M1","YM")'(12)`=monthly("2018M10","YM")', angle(vertical));
+          di "B";
             graph export "$outputFolder/Descriptives/TS_missing_graphs/TS_`y'_missing.png",
               width(7000) replace;
         };
     restore;
 
-    ****  Generate some table showing the months with high missing values in forest-month-level
+    ****  Generate some tables showing the months with high missing values in forest-month-level
     ****  ndvi or evi;
 
     preserve;
